@@ -289,20 +289,6 @@ class EXIV2API XmpParser {
   static int encode(std::string& xmpPacket, const XmpData& xmpData, uint16_t formatFlags = useCompactFormat,
                     uint32_t padding = 0);
   /*!
-    @brief Lock/unlock function type
-
-    A function of this type can be passed to initialize() to
-    make subsequent registration of XMP namespaces thread-safe.
-    See the initialize() function for more information.
-
-    @param pLockData Pointer to the pLockData passed to initialize()
-    @param lockUnlock Indicates whether to lock (true) or unlock (false)
-   */
-  using XmpLockFct = void (*)(void* pLockData, bool lockUnlock);
-
-  /*!
-    @brief Initialize the XMP Toolkit.
-
     Calling this method is usually not needed, as encode() and
     decode() will initialize the XMP Toolkit if necessary.
 
