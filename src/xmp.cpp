@@ -12,20 +12,21 @@
 // + standard includes
 #include <algorithm>
 #include <iostream>
+#include <mutex>
+#include <thread>
 
 // Adobe XMP Toolkit
 #ifdef EXV_HAVE_XMP_TOOLKIT
 #include <expat.h>
 #include "utils.hpp"
 #define TXMP_STRING_TYPE std::string
+#include "xmp_lifecycle.hpp"
 #ifdef EXV_ADOBE_XMPSDK
 #include <XMP.hpp>
 #else
 #include <XMPSDK.hpp>
 #endif
-#endif
 #include <XMP.incl_cpp>
-#include "xmp_lifecycle.hpp"
 #endif  // EXV_HAVE_XMP_TOOLKIT
 
 #ifdef EXV_HAVE_XMP_TOOLKIT
@@ -229,9 +230,6 @@ XMP_OptionBits xmpFormatOptionBits(Exiv2::XmpParser::XmpFormatFlags flags);
 void printNode(const std::string& schemaNs, const std::string& propPath, const std::string& propValue,
                XMP_OptionBits opt);
 
-//! Make an XMP key from a schema namespace and property path
-Exiv2::XmpKey::UniquePtr makeXmpKey(const std::string& schemaNs, const std::string& propPath);
-
 #endif  // EXV_HAVE_XMP_TOOLKIT
 }  // namespace
 
@@ -382,10 +380,11 @@ void Xmpdatum::setValue(const Value* pValue) {
 }
 
 int Xmpdatum::setValue(const std::string& value) {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
   if (!p_->value_) {
     TypeId type = xmpText;
     if (p_->key_) {
-      type = XmpProperties::propertyType(*p_->key_.get());
+      type = XmpProperties::propertyTypeUnsafe(*p_->key_.get());
     }
     p_->value_ = Value::create(type);
   }
@@ -393,36 +392,60 @@ int Xmpdatum::setValue(const std::string& value) {
 }
 
 Xmpdatum& XmpData::operator[](const std::string& key) {
-  XmpKey xmpKey(key);
-  auto pos = findKey(xmpKey);
-  if (pos == end()) {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  XmpKey xmpKey(key, XmpKey::Unsafe::tag);
+  auto pos = std::find_if(xmpMetadata_.begin(), xmpMetadata_.end(), FindXmpdatum(xmpKey));
+  if (pos == xmpMetadata_.end()) {
     return xmpMetadata_.emplace_back(xmpKey);
   }
   return *pos;
 }
 
 int XmpData::add(const XmpKey& key, const Value* value) {
-  return add(Xmpdatum(key, value));
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  return addUnsafe(key, value);
+}
+
+int XmpData::addUnsafe(const XmpKey& key, const Value* value) {
+  xmpMetadata_.emplace_back(key, value);
+  return 0;
 }
 
 int XmpData::add(const Xmpdatum& xmpDatum) {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  return addUnsafe(xmpDatum);
+}
+
+int XmpData::addUnsafe(const Xmpdatum& xmpDatum) {
   xmpMetadata_.push_back(xmpDatum);
   return 0;
 }
 
 XmpData::const_iterator XmpData::findKey(const XmpKey& key) const {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
   return std::find_if(xmpMetadata_.begin(), xmpMetadata_.end(), FindXmpdatum(key));
 }
 
 XmpData::iterator XmpData::findKey(const XmpKey& key) {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
   return std::find_if(xmpMetadata_.begin(), xmpMetadata_.end(), FindXmpdatum(key));
 }
 
 void XmpData::clear() {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  clearUnsafe();
+}
+
+void XmpData::clearUnsafe() {
   xmpMetadata_.clear();
 }
 
 void XmpData::sortByKey() {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  sortByKeyUnsafe();
+}
+
+void XmpData::sortByKeyUnsafe() {
   std::sort(xmpMetadata_.begin(), xmpMetadata_.end(), cmpMetadataByKey);
 }
 
@@ -435,10 +458,20 @@ XmpData::const_iterator XmpData::end() const {
 }
 
 bool XmpData::empty() const {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  return emptyUnsafe();
+}
+
+bool XmpData::emptyUnsafe() const {
   return xmpMetadata_.empty();
 }
 
 long XmpData::count() const {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  return countUnsafe();
+}
+
+long XmpData::countUnsafe() const {
   return static_cast<long>(xmpMetadata_.size());
 }
 
@@ -451,6 +484,7 @@ XmpData::iterator XmpData::end() {
 }
 
 XmpData::iterator XmpData::erase(XmpData::iterator pos) {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
   return xmpMetadata_.erase(pos);
 }
 
@@ -477,10 +511,60 @@ void XmpData::eraseFamily(XmpData::iterator& pos) {
   }
 }
 
+// We use XmpProperties::mutex_ as the single "Giant Lock" for the entire XMP subsystem.
+// See src/properties.cpp for the definition.
+
+// Lock Hierarchy:
+// 1. XmpProperties::mutex_
+//    - Protects XMP Toolkit lifecycle (initialize/terminate)
+//    - Protects XMP Toolkit usage (encode/decode) via serialization
+//    - Protects XMP Namespace Registry (XmpProperties::nsRegistry_)
+//    - Protects XMP SDK internal state (via exclusive access)
+//
+// Facade Pattern:
+// - Public methods (initialize, terminate, encode, decode, registerNs) acquire the lock
+//   and call corresponding private static *Impl* methods.
+// - *Impl* methods assert/assume lock is held and perform the work.
+// - *Impl* methods can call other *Impl* methods or *Unsafe* methods in XmpProperties
+//   without fear of deadlock or recursive locking issues.
+
+// Default locking implementation removed as we use Giant Lock
+
+#ifdef EXV_HAVE_XMP_TOOLKIT
+
 void xmpToolkitEnsureInitialized() {
   static XmpToolkitLifetimeManager instance;
   (void)instance;
 }
+
+void XmpParser::registerNsImpl(const std::string& ns, const std::string& prefix) {
+  xmpToolkitEnsureInitialized();
+  try {
+    std::string existingPrefix;
+    if (SXMPMeta::GetNamespacePrefix(ns.c_str(), &existingPrefix)) {
+      if (!existingPrefix.empty() && existingPrefix.back() == ':') {
+        existingPrefix.pop_back();
+      }
+      if (existingPrefix == prefix) {
+        // Already registered correctly, skip overhead
+        return;
+      }
+    }
+
+    SXMPMeta::DeleteNamespace(ns.c_str());
+#ifdef EXV_ADOBE_XMPSDK
+    SXMPMeta::RegisterNamespace(ns.c_str(), prefix.c_str(), nullptr);
+#else
+    SXMPMeta::RegisterNamespace(ns.c_str(), prefix.c_str());
+#endif
+  } catch (const XMP_Error& /* e */) {
+    // throw Error(ErrorCode::kerXMPToolkitError, e.GetID(), e.GetErrMsg());
+  }
+}
+#else
+void XmpParser::registerNsImpl(const std::string& /*ns*/, const std::string& /*prefix*/) {
+}
+#endif
 
 #ifdef EXV_HAVE_XMP_TOOLKIT
 static XMP_Status nsDumper(void* refCon, XMP_StringPtr buffer, XMP_StringLen bufferSize) {
@@ -516,34 +600,39 @@ static XMP_Status nsDumper(void* refCon, XMP_StringPtr buffer, XMP_StringLen buf
 #ifdef EXV_HAVE_XMP_TOOLKIT
 void XmpParser::registeredNamespaces(Exiv2::Dictionary& dict) {
   try {
-    xmpToolkitEnsureInitialized();
-    SXMPMeta::DumpNamespaces(nsDumper, &dict);
+    auto lock = std::lock_guard(XmpProperties::mutex_);
+    registeredNamespacesUnsafe(dict);
   } catch (const XMP_Error& e) {
     throw Error(ErrorCode::kerXMPToolkitError, e.GetID(), e.GetErrMsg());
   }
+}
+
+void XmpParser::registeredNamespacesUnsafe(Exiv2::Dictionary& dict) {
+  xmpToolkitEnsureInitialized();
+  SXMPMeta::DumpNamespaces(nsDumper, &dict);
 }
 #else
 void XmpParser::registeredNamespaces(Exiv2::Dictionary&) {
 }
 #endif
 
+void XmpParser::clearCustomNamespaces() {
+  auto lock = std::lock_guard(XmpProperties::mutex_);
+  XmpProperties::unregisterNsUnsafe();
+}
+
 #ifdef EXV_HAVE_XMP_TOOLKIT
 void XmpParser::registerNs(const std::string& ns, const std::string& prefix) {
   try {
-    xmpToolkitEnsureInitialized();
-    SXMPMeta::DeleteNamespace(ns.c_str());
-#ifdef EXV_ADOBE_XMPSDK
-    SXMPMeta::RegisterNamespace(ns.c_str(), prefix.c_str(), nullptr);
-#else
-    SXMPMeta::RegisterNamespace(ns.c_str(), prefix.c_str());
-#endif
+    auto lock = std::lock_guard(XmpProperties::mutex_);
+    registerNsImpl(ns, prefix);
   } catch (const XMP_Error& /* e */) {
     // throw Error(ErrorCode::kerXMPToolkitError, e.GetID(), e.GetErrMsg());
   }
-}  // XmpParser::registerNs
+}
 #else
 void XmpParser::registerNs(const std::string& /*ns*/, const std::string& /*prefix*/) {
-}  // XmpParser::registerNs
+}
 #endif
 
 void XmpParser::unregisterNs(const std::string& /*ns*/) {
@@ -560,14 +649,17 @@ void XmpParser::unregisterNs(const std::string& /*ns*/) {
 #ifdef EXV_HAVE_XMP_TOOLKIT
 int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
   try {
-    xmpData.clear();
     xmpData.setPacket(xmpPacket);
-    if (xmpPacket.empty())
+    if (xmpPacket.empty()) {
+      xmpData.clear();
       return 0;
+    }
 
+    // Acquire Giant Lock
+    auto lock = std::lock_guard(XmpProperties::mutex_);
     xmpToolkitEnsureInitialized();
 
-    // Make sure the unterminated substring is used
+    xmpData.clearUnsafe();
 
     // Make sure the unterminated substring is used
     size_t len = xmpPacket.size();
@@ -589,12 +681,12 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
       if (XMP_NodeIsSchema(opt)) {
         // Register unknown namespaces with Exiv2
         // (Namespaces are automatically registered with the XMP Toolkit)
-        if (XmpProperties::prefix(schemaNs).empty()) {
+        if (XmpProperties::prefixUnsafe(schemaNs).empty()) {
           std::string prefix;
           if (!SXMPMeta::GetNamespacePrefix(schemaNs.c_str(), &prefix))
             throw Error(ErrorCode::kerSchemaNamespaceNotRegistered, schemaNs);
           prefix.pop_back();
-          XmpProperties::registerNs(schemaNs, prefix);
+          XmpProperties::registerNsUnsafe(schemaNs, prefix);
         }
         continue;
       }
@@ -620,7 +712,7 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
           }
           val->value_[propValue] = std::move(text);
         }
-        xmpData.add(*key, val.get());
+        xmpData.addUnsafe(*key, val.get());
         continue;
       }
       if (XMP_PropIsArray(opt) && !XMP_PropHasQualifiers(opt) && !XMP_ArrayIsAltText(opt)) {
@@ -649,7 +741,7 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
             printNode(schemaNs, propPath, propValue, opt);
             val->read(propValue);
           }
-          xmpData.add(*key, val.get());
+          xmpData.addUnsafe(*key, val.get());
           continue;
         }
       }
@@ -659,12 +751,12 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
         // Create a metadatum with only XMP options
         val->setXmpArrayType(xmpArrayType(opt));
         val->setXmpStruct(xmpStruct(opt));
-        xmpData.add(*key, val.get());
+        xmpData.addUnsafe(*key, val.get());
         continue;
       }
       if (XMP_PropIsSimple(opt) || XMP_PropIsQualifier(opt)) {
         val->read(propValue);
-        xmpData.add(*key, val.get());
+        xmpData.addUnsafe(*key, val.get());
         continue;
       }
       // Don't let any node go by unnoticed
@@ -674,7 +766,13 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
     return 0;
   }
 #ifndef SUPPRESS_WARNINGS
-  catch (const XMP_Error& e) {
+  catch (const Error& e) {
+    if (e.code() == ErrorCode::kerXMPToolkitError &&
+        std::string(e.what()).find("Failed to initialize") != std::string::npos) {
+      return 2;
+    }
+    throw;
+  } catch (const XMP_Error& e) {
     EXV_ERROR << Error(ErrorCode::kerXMPToolkitError, e.GetID(), e.GetErrMsg()) << "\n";
     xmpData.clear();
     return 3;
@@ -701,23 +799,27 @@ int XmpParser::decode(XmpData& xmpData, const std::string& xmpPacket) {
 #ifdef EXV_HAVE_XMP_TOOLKIT
 int XmpParser::encode(std::string& xmpPacket, const XmpData& xmpData, uint16_t formatFlags, uint32_t padding) {
   try {
-    if (xmpData.empty()) {
+    // Acquire Giant Lock
+    auto lock = std::lock_guard(XmpProperties::mutex_);
+    xmpToolkitEnsureInitialized();
+
+    if (xmpData.emptyUnsafe()) {
       xmpPacket.clear();
       return 0;
-    }
-
-    xmpToolkitEnsureInitialized();
-    SXMPMeta meta;
-    // Register custom namespaces with XMP-SDK
+    }  // We are holding the Giant Lock, so we can iterate nsRegistry_ safely.
+    // XmpProperties interactions must go through Unsafe/impl methods to avoid deadlocks.
     for (const auto& [xmp, uri] : XmpProperties::nsRegistry_) {
 #ifdef EXIV2_DEBUG_MESSAGES
       std::cerr << "Registering " << uri.prefix_ << " : " << xmp << "\n";
 #endif
-      registerNs(xmp, uri.prefix_);
+      // registerNsImpl is safe since we hold the lock
+      registerNsImpl(xmp, uri.prefix_);
     }
+
     SXMPMeta meta;
     for (const auto& xmp : xmpData) {
-      const std::string ns = XmpProperties::ns(xmp.groupName());
+      // Must use Unsafe version of ns() because we hold the lock!
+      const std::string ns = XmpProperties::nsUnsafe(xmp.groupName());
       XMP_OptionBits options = 0;
 
       if (xmp.typeId() == langAlt) {
@@ -774,7 +876,13 @@ int XmpParser::encode(std::string& xmpPacket, const XmpData& xmpData, uint16_t f
     return 0;
   }
 #ifndef SUPPRESS_WARNINGS
-  catch (const XMP_Error& e) {
+  catch (const Error& e) {
+    if (e.code() == ErrorCode::kerXMPToolkitError &&
+        std::string(e.what()).find("Failed to initialize") != std::string::npos) {
+      return 2;
+    }
+    throw;
+  } catch (const XMP_Error& e) {
     EXV_ERROR << Error(ErrorCode::kerXMPToolkitError, e.GetID(), e.GetErrMsg()) << "\n";
     return 3;
   }
@@ -783,7 +891,7 @@ int XmpParser::encode(std::string& xmpPacket, const XmpData& xmpData, uint16_t f
     return 3;
   }
 #endif  // SUPPRESS_WARNINGS
-}  // XmpParser::decode
+}  // XmpParser::encode
 #else
 int XmpParser::encode(std::string& /*xmpPacket*/, const XmpData& xmpData, uint16_t /*formatFlags*/,
                       uint32_t /*padding*/) {
@@ -885,12 +993,11 @@ XMP_OptionBits xmpFormatOptionBits(Exiv2::XmpParser::XmpFormatFlags flags) {
 #ifdef EXIV2_DEBUG_MESSAGES
 void printNode(const std::string& schemaNs, const std::string& propPath, const std::string& propValue,
                XMP_OptionBits opt) {
-  static bool first = true;
-  if (first) {
-    first = false;
+  static std::once_flag flag;
+  std::call_once(flag, []() {
     std::cout << "ashisabsals\n"
               << "lcqqtrgqlai\n";
-  }
+  });
   enum {
     alia = 0,
     sche,
@@ -943,7 +1050,9 @@ void printNode(const std::string&, const std::string&, const std::string&, XMP_O
 }
 #endif  // EXIV2_DEBUG_MESSAGES
 
-Exiv2::XmpKey::UniquePtr makeXmpKey(const std::string& schemaNs, const std::string& propPath) {
+}  // namespace
+
+Exiv2::XmpKey::UniquePtr Exiv2::XmpParser::makeXmpKey(const std::string& schemaNs, const std::string& propPath) {
   std::string property;
   std::string::size_type idx = propPath.find(':');
   if (idx == std::string::npos) {
@@ -951,12 +1060,10 @@ Exiv2::XmpKey::UniquePtr makeXmpKey(const std::string& schemaNs, const std::stri
   }
   // Don't worry about out_of_range, XMP parser takes care of this
   property = propPath.substr(idx + 1);
-  std::string prefix = Exiv2::XmpProperties::prefix(schemaNs);
+  std::string prefix = Exiv2::XmpProperties::prefixUnsafe(schemaNs);
   if (prefix.empty()) {
     throw Exiv2::Error(Exiv2::ErrorCode::kerNoPrefixForNamespace, propPath, schemaNs);
   }
-  return std::make_unique<Exiv2::XmpKey>(prefix, property);
+  return Exiv2::XmpKey::UniquePtr(new Exiv2::XmpKey(prefix, property, Exiv2::XmpKey::Unsafe::tag));
 }  // makeXmpKey
 #endif  // EXV_HAVE_XMP_TOOLKIT
-
-}  // namespace

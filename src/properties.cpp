@@ -71,7 +71,7 @@ extern const XmpPropertyInfo xmpAcdseeInfo[];
 extern const XmpPropertyInfo xmpGPanoInfo[];
 
 constexpr XmpNsInfo xmpNsInfo[] = {
-    // Schemas   -   NOTE: Schemas which the XMP-SDK doesn't know must be registered in XmpParser::initialize -
+    // Schemas   -   NOTE: Schemas which the XMP-SDK doesn't know must be registered in XmpToolkitLifetimeManager -
     // Todo: Automate this
     {"http://purl.org/dc/elements/1.1/", "dc", xmpDcInfo, N_("Dublin Core schema")},
     {"http://www.digikam.org/ns/1.0/", "digiKam", xmpDigikamInfo, N_("digiKam Photo Management schema")},
@@ -4967,10 +4967,23 @@ const XmpNsInfo* XmpProperties::lookupNsRegistryUnsafe(const XmpNsInfo::Prefix& 
 
 void XmpProperties::registerNs(const std::string& ns, const std::string& prefix) {
   auto scopedWriteLock = std::scoped_lock(mutex_);
+  registerNsUnsafe(ns, prefix);
+}
+
+void XmpProperties::registerNsUnsafe(const std::string& ns, const std::string& prefix) {
+  if (ns.empty())
+    return;
   std::string ns2 = ns;
   if (ns2.back() != '/' && ns2.back() != '#')
     ns2 += '/';
-  // Check if there is already a registered namespace with this prefix
+
+  // 1. Check if this URI is already registered with this exact prefix
+  auto it = nsRegistry_.find(ns2);
+  if (it != nsRegistry_.end() && std::strcmp(it->second.prefix_, prefix.c_str()) == 0) {
+    return;  // Already registered with this prefix
+  }
+
+  // 2. Check if this prefix is already registered with a DIFFERENT URI
   if (auto xnp = lookupNsRegistryUnsafe(XmpNsInfo::Prefix{prefix})) {
 #ifndef SUPPRESS_WARNINGS
     if (ns2 != xnp->ns_)
@@ -4978,6 +4991,10 @@ void XmpProperties::registerNs(const std::string& ns, const std::string& prefix)
 #endif
     unregisterNsUnsafe(xnp->ns_);
   }
+
+  // 3. Ensure the URI is unregistered if it's currently used with a different prefix
+  // (This handles the case where prefix changed for the same URI, preventing memory leak)
+  unregisterNsUnsafe(ns2);
   // Allocated memory is freed when the namespace is unregistered.
   // Using malloc/free for better system compatibility in case
   // users don't unregister their namespaces explicitly.
@@ -5009,6 +5026,10 @@ void XmpProperties::unregisterNsUnsafe(const std::string& ns) {
 
 void XmpProperties::unregisterNs() {
   auto scoped_write_lock = std::scoped_lock(mutex_);
+  unregisterNsUnsafe();
+}
+
+void XmpProperties::unregisterNsUnsafe() {
   /// \todo check if we are not unregistering the first NS
   auto i = nsRegistry_.begin();
   while (i != nsRegistry_.end()) {
@@ -5019,6 +5040,10 @@ void XmpProperties::unregisterNs() {
 
 std::string XmpProperties::prefix(const std::string& ns) {
   auto scoped_read_lock = std::scoped_lock(mutex_);
+  return prefixUnsafe(ns);
+}
+
+std::string XmpProperties::prefixUnsafe(const std::string& ns) {
   std::string ns2 = ns;
   if (ns2.back() != '/' && ns2.back() != '#')
     ns2 += '/';
@@ -5034,27 +5059,51 @@ std::string XmpProperties::prefix(const std::string& ns) {
 
 std::string XmpProperties::ns(const std::string& prefix) {
   auto scoped_read_lock = std::scoped_lock(mutex_);
+  return nsUnsafe(prefix);
+}
+
+std::string XmpProperties::nsUnsafe(const std::string& prefix) {
   if (auto xn = lookupNsRegistryUnsafe(XmpNsInfo::Prefix{prefix}))
     return xn->ns_;
   return nsInfoUnsafe(prefix)->ns_;
 }
 
 const char* XmpProperties::propertyTitle(const XmpKey& key) {
-  const XmpPropertyInfo* pi = propertyInfo(key);
+  auto lock = std::scoped_lock(mutex_);
+  return propertyTitleUnsafe(key);
+}
+
+const char* XmpProperties::propertyTitleUnsafe(const XmpKey& key) {
+  const XmpPropertyInfo* pi = propertyInfoUnsafe(key);
   return pi ? pi->title_ : nullptr;
 }
 
 const char* XmpProperties::propertyDesc(const XmpKey& key) {
-  const XmpPropertyInfo* pi = propertyInfo(key);
+  auto lock = std::scoped_lock(mutex_);
+  return propertyDescUnsafe(key);
+}
+
+const char* XmpProperties::propertyDescUnsafe(const XmpKey& key) {
+  const XmpPropertyInfo* pi = propertyInfoUnsafe(key);
   return pi ? pi->desc_ : nullptr;
 }
 
 TypeId XmpProperties::propertyType(const XmpKey& key) {
-  const XmpPropertyInfo* pi = propertyInfo(key);
+  auto lock = std::scoped_lock(mutex_);
+  return propertyTypeUnsafe(key);
+}
+
+TypeId XmpProperties::propertyTypeUnsafe(const XmpKey& key) {
+  const XmpPropertyInfo* pi = propertyInfoUnsafe(key);
   return pi ? pi->typeId_ : xmpText;
 }
 
 const XmpPropertyInfo* XmpProperties::propertyInfo(const XmpKey& key) {
+  auto lock = std::scoped_lock(mutex_);
+  return propertyInfoUnsafe(key);
+}
+
+const XmpPropertyInfo* XmpProperties::propertyInfoUnsafe(const XmpKey& key) {
   std::string prefix = key.groupName();
   std::string property = key.tagName();
   // If property is a path for a nested property, determines the innermost element
@@ -5070,7 +5119,7 @@ const XmpPropertyInfo* XmpProperties::propertyInfo(const XmpKey& key) {
     std::cout << "Nested key: " << key.key() << ", prefix: " << prefix << ", property: " << property << "\n";
 #endif
   }
-  if (auto pl = propertyList(prefix)) {
+  if (auto pl = propertyListUnsafe(prefix)) {
     for (size_t j = 0; pl[j].name_; ++j) {
       if (property == pl[j].name_) {
         return pl + j;
@@ -5082,11 +5131,21 @@ const XmpPropertyInfo* XmpProperties::propertyInfo(const XmpKey& key) {
 
 /// \todo not used internally. At least we should test it
 const char* XmpProperties::nsDesc(const std::string& prefix) {
-  return nsInfo(prefix)->desc_;
+  auto lock = std::scoped_lock(mutex_);
+  return nsDescUnsafe(prefix);
+}
+
+const char* XmpProperties::nsDescUnsafe(const std::string& prefix) {
+  return nsInfoUnsafe(prefix)->desc_;
 }
 
 const XmpPropertyInfo* XmpProperties::propertyList(const std::string& prefix) {
-  return nsInfo(prefix)->xmpPropertyInfo_;
+  auto lock = std::scoped_lock(mutex_);
+  return propertyListUnsafe(prefix);
+}
+
+const XmpPropertyInfo* XmpProperties::propertyListUnsafe(const std::string& prefix) {
+  return nsInfoUnsafe(prefix)->xmpPropertyInfo_;
 }
 
 const XmpNsInfo* XmpProperties::nsInfo(const std::string& prefix) {
@@ -5105,22 +5164,37 @@ const XmpNsInfo* XmpProperties::nsInfoUnsafe(const std::string& prefix) {
 }
 
 void XmpProperties::registeredNamespaces(Exiv2::Dictionary& nsDict) {
+  // Lock must be held for the duration of registry iteration
+  auto scopedLock = std::scoped_lock(mutex_);
+  registeredNamespacesUnsafe(nsDict);
+}
+
+void XmpProperties::registeredNamespacesUnsafe(Exiv2::Dictionary& nsDict) {
   for (auto&& i : xmpNsInfo) {
-    Exiv2::XmpParser::registerNs(i.ns_, i.prefix_);
+    Exiv2::XmpParser::registerNsImpl(i.ns_, i.prefix_);
   }
-  Exiv2::XmpParser::registeredNamespaces(nsDict);
+  Exiv2::XmpParser::registeredNamespacesUnsafe(nsDict);
 }
 
 void XmpProperties::printProperties(std::ostream& os, const std::string& prefix) {
-  if (auto pl = propertyList(prefix)) {
+  auto lock = std::scoped_lock(mutex_);
+  printPropertiesUnsafe(os, prefix);
+}
+
+void XmpProperties::printPropertiesUnsafe(std::ostream& os, const std::string& prefix) {
+  if (auto pl = propertyListUnsafe(prefix)) {
     for (int i = 0; pl[i].name_; ++i) {
       os << pl[i];
     }
   }
-
-}  // XmpProperties::printProperties
+}  // XmpProperties::printPropertiesUnsafe
 
 std::ostream& XmpProperties::printProperty(std::ostream& os, const std::string& key, const Value& value) {
+  auto lock = std::scoped_lock(mutex_);
+  return printPropertyUnsafe(os, key, value);
+}
+
+std::ostream& XmpProperties::printPropertyUnsafe(std::ostream& os, const std::string& key, const Value& value) {
   PrintFct fct = printValue;
   if (value.count() != 0) {
     if (auto info = Exiv2::find(xmpPrintInfo, key))
@@ -5131,8 +5205,9 @@ std::ostream& XmpProperties::printProperty(std::ostream& os, const std::string& 
 
 //! @brief Internal Pimpl structure with private members and data of class XmpKey.
 struct XmpKey::Impl {
-  Impl() = default;                                              //!< Default constructor
-  Impl(const std::string& prefix, const std::string& property);  //!< Constructor
+  Impl() = default;                                                           //!< Default constructor
+  Impl(const std::string& prefix, const std::string& property);               //!< Constructor
+  Impl(const std::string& prefix, const std::string& property, bool unsafe);  // Unsafe constructor
 
   /*!
     @brief Parse and convert the \em key string into property and prefix.
@@ -5142,6 +5217,7 @@ struct XmpKey::Impl {
     @throw Error if the key cannot be decomposed.
   */
   void decomposeKey(const std::string& key);  //!< Mysterious magic
+  void decomposeKeyUnsafe(const std::string& key);
 
   // DATA
   static constexpr auto familyName_ = "Xmp";  //!< "Xmp"
@@ -5160,11 +5236,28 @@ XmpKey::Impl::Impl(const std::string& prefix, const std::string& property) {
   prefix_ = prefix;
 }
 
+XmpKey::Impl::Impl(const std::string& prefix, const std::string& property, bool /*unsafe*/) {
+  // Validate prefix unsafely (must hold lock)
+  if (XmpProperties::nsUnsafe(prefix).empty())
+    throw Error(ErrorCode::kerNoNamespaceForPrefix, prefix);
+
+  property_ = property;
+  prefix_ = prefix;
+}
+
 XmpKey::XmpKey(const std::string& key) : p_(std::make_unique<Impl>()) {
   p_->decomposeKey(key);
 }
 
+XmpKey::XmpKey(const std::string& key, Unsafe) : p_(std::make_unique<Impl>()) {
+  p_->decomposeKeyUnsafe(key);
+}
+
 XmpKey::XmpKey(const std::string& prefix, const std::string& property) : p_(std::make_unique<Impl>(prefix, property)) {
+}
+
+XmpKey::XmpKey(const std::string& prefix, const std::string& property, Unsafe) :
+    p_(std::make_unique<Impl>(prefix, property, true)) {
 }
 
 XmpKey::~XmpKey() = default;
@@ -5204,14 +5297,16 @@ std::string XmpKey::tagName() const {
 }
 
 std::string XmpKey::tagLabel() const {
-  const char* pt = XmpProperties::propertyTitle(*this);
+  auto lock = std::scoped_lock(XmpProperties::mutex_);
+  const char* pt = XmpProperties::propertyTitleUnsafe(*this);
   if (!pt)
     return tagName();
   return pt;
 }
 
 std::string XmpKey::tagDesc() const {
-  const char* pt = XmpProperties::propertyDesc(*this);
+  auto lock = std::scoped_lock(XmpProperties::mutex_);
+  const char* pt = XmpProperties::propertyDescUnsafe(*this);
   if (!pt)
     return "";
   return pt;
@@ -5222,7 +5317,8 @@ uint16_t XmpKey::tag() const {
 }
 
 std::string XmpKey::ns() const {
-  return XmpProperties::ns(p_->prefix_);
+  auto lock = std::scoped_lock(XmpProperties::mutex_);
+  return XmpProperties::nsUnsafe(p_->prefix_);
 }
 
 //! @cond IGNORE
@@ -5249,6 +5345,30 @@ void XmpKey::Impl::decomposeKey(const std::string& key) {
   property_ = std::move(property);
   prefix_ = std::move(prefix);
 }  // XmpKey::Impl::decomposeKey
+
+void XmpKey::Impl::decomposeKeyUnsafe(const std::string& key) {
+  // Get the family name, prefix and property name parts of the key
+  if (!key.starts_with(familyName_))
+    throw Error(ErrorCode::kerInvalidKey, key);
+  std::string::size_type pos1 = key.find('.');
+  std::string::size_type pos0 = pos1 + 1;
+  pos1 = key.find('.', pos0);
+  if (pos1 == std::string::npos)
+    throw Error(ErrorCode::kerInvalidKey, key);
+  std::string prefix = key.substr(pos0, pos1 - pos0);
+  if (prefix.empty())
+    throw Error(ErrorCode::kerInvalidKey, key);
+  std::string property = key.substr(pos1 + 1);
+  if (property.empty())
+    throw Error(ErrorCode::kerInvalidKey, key);
+
+  // Validate prefix unsafely (must hold lock)
+  if (XmpProperties::nsUnsafe(prefix).empty())
+    throw Error(ErrorCode::kerNoNamespaceForPrefix, prefix);
+
+  property_ = std::move(property);
+  prefix_ = std::move(prefix);
+}  // XmpKey::Impl::decomposeKeyUnsafe
 
 // *************************************************************************
 // free functions

@@ -63,9 +63,31 @@ struct EXIV2API XmpNsInfo {
 //! XMP property reference, implemented as a static class.
 class EXIV2API XmpProperties {
  private:
-  static const XmpNsInfo* nsInfoUnsafe(const std::string& prefix);
-  static void unregisterNsUnsafe(const std::string& ns);
   static const XmpNsInfo* lookupNsRegistryUnsafe(const XmpNsInfo::Prefix& prefix);
+  static void unregisterNsUnsafe(const std::string& ns);
+
+  // Unsafe versions of public methods (Caller MUST hold mutex_)
+  static std::string nsUnsafe(const std::string& prefix);
+  static std::string prefixUnsafe(const std::string& ns);
+  static void registerNsUnsafe(const std::string& ns, const std::string& prefix);
+  static void unregisterNsUnsafe();
+  static void registeredNamespacesUnsafe(Exiv2::Dictionary& nsDict);
+
+  static const char* propertyTitleUnsafe(const XmpKey& key);
+  static const char* propertyDescUnsafe(const XmpKey& key);
+  static TypeId propertyTypeUnsafe(const XmpKey& key);
+  static const XmpPropertyInfo* propertyInfoUnsafe(const XmpKey& key);
+  static const char* nsDescUnsafe(const std::string& prefix);
+  static const XmpPropertyInfo* propertyListUnsafe(const std::string& prefix);
+  static const XmpNsInfo* nsInfoUnsafe(const std::string& prefix);
+  static void printPropertiesUnsafe(std::ostream& os, const std::string& prefix);
+  static std::ostream& printPropertyUnsafe(std::ostream& os, const std::string& key, const Value& value);
+
+  friend class XmpParser;  // Allow XmpParser to call Unsafe methods while holding the lock
+  friend class XmpKey;     // Allow XmpKey to call Unsafe methods for tagging
+  friend class XmpData;
+  friend class Xmpdatum;
+  friend class XmpToolkitLifetimeManager;  // Allow access to unregisterNsUnsafe() during cleanup
 
  public:
   /*!
@@ -271,6 +293,14 @@ class EXIV2API XmpKey : public Key {
   // Pimpl idiom
   struct Impl;
   std::unique_ptr<Impl> p_;
+
+  // Internal "unsafe" constructor (Caller MUST hold XmpProperties::mutex_)
+  enum class Unsafe { tag };
+  XmpKey(const std::string& prefix, const std::string& property, Unsafe);
+  XmpKey(const std::string& key, Unsafe);
+  friend class XmpParser;
+  friend class XmpData;
+  friend class Xmpdatum;
 
 };  // class XmpKey
 
