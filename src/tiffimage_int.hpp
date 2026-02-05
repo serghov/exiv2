@@ -6,6 +6,7 @@
 // *****************************************************************************
 // included header files
 #include "tifffwd_int.hpp"
+#include "tags.hpp"
 #include "types.hpp"
 
 #include <cstddef>
@@ -157,7 +158,15 @@ struct TiffGroupKey_hash {
   @brief Data structure used as a row (element) of a table (array)
          defining the TIFF component used for each tag in a group.
  */
-using TiffGroupTable = std::unordered_map<TiffGroupKey, NewTiffCompFct, TiffGroupKey_hash>;
+struct TiffGroupEntry {
+  NewTiffCompFct compFct_;
+  IfdId targetId_;
+
+  TiffGroupEntry(NewTiffCompFct f, IfdId id = IfdId::ifdIdNotSet) : compFct_(f), targetId_(id) {
+  }
+};
+
+using TiffGroupTable = std::unordered_map<TiffGroupKey, TiffGroupEntry, TiffGroupKey_hash>;
 
 /*!
   @brief Data structure used as a row of the table which describes TIFF trees.
@@ -189,6 +198,11 @@ class TiffCreator {
  private:
   static const TiffTreeTable tiffTreeTable_;    //!< TIFF tree structure
   static const TiffGroupTable tiffGroupTable_;  //!< TIFF group structure
+
+ public:
+  // Data structure to list the SubIFD pointers dynamically
+  using TiffSubIfdTable = std::vector<std::pair<TiffGroupKey, IfdId>>;
+  static TiffSubIfdTable getSubIfdTable();
 };
 
 /*!

@@ -453,6 +453,7 @@ TiffEncoder::TiffEncoder(ExifData exifData, const IptcData& iptcData, const XmpD
     findEncoderFct_(findEncoderFct) {
   encodeIptc();
   encodeXmp();
+  checkMissingSubIfds();
 
   // Find camera make
   ExifKey key("Exif.Image.Make");
@@ -546,6 +547,46 @@ void TiffEncoder::encodeXmp() {
   }
 #endif
 }  // TiffEncoder::encodeXmp
+
+void TiffEncoder::checkMissingSubIfds() {
+  const auto& subIfds = TiffCreator::getSubIfdTable();
+  for (const auto& entry : subIfds) {
+    uint16_t tag = static_cast<uint16_t>(entry.first.first);
+    IfdId group = entry.first.second;
+    IfdId targetIfd = entry.second;
+
+    // We can only check groups that have a name
+    if (targetIfd == IfdId::ifdIdNotSet || group == IfdId::ifdIdNotSet) {
+      continue;
+    }
+
+    const char* targetGroupNameStr = Internal::groupName(targetIfd);
+    const char* groupNameStr = Internal::groupName(group);
+
+    // Check if any tags exist for the target group
+    bool hasTags = false;
+    for (auto i = exifData_.begin(); i != exifData_.end(); ++i) {
+      if (i->groupName() == targetGroupNameStr) {
+        hasTags = true;
+        break;
+      }
+    }
+
+    if (!hasTags) {
+      // Look for the pointer tag in the parent group and delete it if found
+      for (auto i = exifData_.begin(); i != exifData_.end(); ) {
+        if (i->tag() == tag && i->groupName() == groupNameStr) {
+#ifdef EXIV2_DEBUG_MESSAGES
+          std::cerr << "Deleting empty SubIFD tag " << i->key() << "\n";
+#endif
+          i = exifData_.erase(i);
+        } else {
+          ++i;
+        }
+      }
+    }
+  }
+} // TiffEncoder::checkMissingSubIfds
 
 void TiffEncoder::setDirty(bool flag) {
   dirty_ = flag;

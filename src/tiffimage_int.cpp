@@ -1439,7 +1439,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
 
     // Fujifilm RAF #1402.  Use different root when parsing embedded tiff.
     {{Tag::fuji, IfdId::ifdIdNotSet}, &newTiffDirectory<IfdId::fujiId>},
-    {{0xf000, IfdId::fujiId}, &newTiffSubIfd<IfdId::fujiId>},
+    {{0xf000, IfdId::fujiId}, {&newTiffSubIfd<IfdId::fujiId>, IfdId::fujiId}},
 
     // CR3 images #1475
     {{Tag::cmt2, IfdId::ifdIdNotSet}, &newTiffDirectory<IfdId::exifId>},
@@ -1447,15 +1447,15 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     {{Tag::cmt4, IfdId::ifdIdNotSet}, &newTiffDirectory<IfdId::gpsId>},
 
     // IFD0
-    {{0x8769, IfdId::ifd0Id}, &newTiffSubIfd<IfdId::exifId>},
-    {{0x8825, IfdId::ifd0Id}, &newTiffSubIfd<IfdId::gpsId>},
+    {{0x8769, IfdId::ifd0Id}, {&newTiffSubIfd<IfdId::exifId>, IfdId::exifId}},
+    {{0x8825, IfdId::ifd0Id}, {&newTiffSubIfd<IfdId::gpsId>, IfdId::gpsId}},
     {{0x0111, IfdId::ifd0Id}, &newTiffImageData<0x0117, IfdId::ifd0Id>},
     {{0x0117, IfdId::ifd0Id}, &newTiffImageSize<0x0111, IfdId::ifd0Id>},
     {{0x0144, IfdId::ifd0Id}, &newTiffImageData<0x0145, IfdId::ifd0Id>},
     {{0x0145, IfdId::ifd0Id}, &newTiffImageSize<0x0144, IfdId::ifd0Id>},
     {{0x0201, IfdId::ifd0Id}, &newTiffImageData<0x0202, IfdId::ifd0Id>},
     {{0x0202, IfdId::ifd0Id}, &newTiffImageSize<0x0201, IfdId::ifd0Id>},
-    {{0x014a, IfdId::ifd0Id}, &newTiffSubIfd<IfdId::subImage1Id>},
+    {{0x014a, IfdId::ifd0Id}, {&newTiffSubIfd<IfdId::subImage1Id>, IfdId::subImage1Id}},
     {{0xc634, IfdId::ifd0Id}, &newTiffMnEntry},
     {{Tag::next, IfdId::ifd0Id}, &newTiffDirectory<IfdId::ifd1Id>},
     {{Tag::all, IfdId::ifd0Id}, &newTiffEntry},
@@ -1551,7 +1551,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     {{Tag::all, IfdId::subImage9Id}, &newTiffEntry},
 
     // Exif subdir
-    {{0xa005, IfdId::exifId}, &newTiffSubIfd<IfdId::iopId>},
+    {{0xa005, IfdId::exifId}, {&newTiffSubIfd<IfdId::iopId>, IfdId::iopId}},
     {{0x927c, IfdId::exifId}, &newTiffMnEntry},
     {{Tag::next, IfdId::exifId}, ignoreTiffComponent},
     {{Tag::all, IfdId::exifId}, &newTiffEntry},
@@ -1569,7 +1569,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     {{0x0117, IfdId::ifd1Id}, &newTiffThumbSize<0x0111, IfdId::ifd1Id>},
     {{0x0144, IfdId::ifd1Id}, &newTiffImageData<0x0145, IfdId::ifd1Id>},
     {{0x0145, IfdId::ifd1Id}, &newTiffImageSize<0x0144, IfdId::ifd1Id>},
-    {{0x014a, IfdId::ifd1Id}, &newTiffSubIfd<IfdId::subThumb1Id>},
+    {{0x014a, IfdId::ifd1Id}, {&newTiffSubIfd<IfdId::subThumb1Id>, IfdId::subThumb1Id}},
     {{0x0201, IfdId::ifd1Id}, &newTiffThumbData<0x0202, IfdId::ifd1Id>},
     {{0x0202, IfdId::ifd1Id}, &newTiffThumbSize<0x0201, IfdId::ifd1Id>},
     {{Tag::next, IfdId::ifd1Id}, &newTiffDirectory<IfdId::ifd2Id>},
@@ -1615,22 +1615,22 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     // Olympus2 makernote
     {{0x0001, IfdId::olympus2Id}, EXV_SIMPLE_BINARY_ARRAY(minoCsoCfg)},
     {{0x0003, IfdId::olympus2Id}, EXV_SIMPLE_BINARY_ARRAY(minoCsnCfg)},
-    {{0x2010, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusEqId>},
-    {{0x2020, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusCsId>},
-    {{0x2030, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusRdId>},
-    {{0x2031, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusRd2Id>},
-    {{0x2040, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusIpId>},
-    {{0x2050, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFiId>},
-    {{0x2100, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe1Id>},
-    {{0x2200, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe2Id>},
-    {{0x2300, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe3Id>},
-    {{0x2400, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe4Id>},
-    {{0x2500, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe5Id>},
-    {{0x2600, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe6Id>},
-    {{0x2700, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe7Id>},
-    {{0x2800, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe8Id>},
-    {{0x2900, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusFe9Id>},
-    {{0x3000, IfdId::olympus2Id}, &newTiffSubIfd<IfdId::olympusRiId>},
+    {{0x2010, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusEqId>, IfdId::olympusEqId}},
+    {{0x2020, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusCsId>, IfdId::olympusCsId}},
+    {{0x2030, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusRdId>, IfdId::olympusRdId}},
+    {{0x2031, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusRd2Id>, IfdId::olympusRd2Id}},
+    {{0x2040, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusIpId>, IfdId::olympusIpId}},
+    {{0x2050, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFiId>, IfdId::olympusFiId}},
+    {{0x2100, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe1Id>, IfdId::olympusFe1Id}},
+    {{0x2200, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe2Id>, IfdId::olympusFe2Id}},
+    {{0x2300, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe3Id>, IfdId::olympusFe3Id}},
+    {{0x2400, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe4Id>, IfdId::olympusFe4Id}},
+    {{0x2500, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe5Id>, IfdId::olympusFe5Id}},
+    {{0x2600, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe6Id>, IfdId::olympusFe6Id}},
+    {{0x2700, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe7Id>, IfdId::olympusFe7Id}},
+    {{0x2800, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe8Id>, IfdId::olympusFe8Id}},
+    {{0x2900, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusFe9Id>, IfdId::olympusFe9Id}},
+    {{0x3000, IfdId::olympus2Id}, {&newTiffSubIfd<IfdId::olympusRiId>, IfdId::olympusRiId}},
     {{Tag::next, IfdId::olympus2Id}, ignoreTiffComponent},
     {{Tag::all, IfdId::olympus2Id}, &newTiffEntry},
 
@@ -1742,7 +1742,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
 
     // Nikon3 makernote
     {{Tag::next, IfdId::nikon3Id}, ignoreTiffComponent},
-    {{0x0011, IfdId::nikon3Id}, &newTiffSubIfd<IfdId::nikonPvId>},
+    {{0x0011, IfdId::nikon3Id}, {&newTiffSubIfd<IfdId::nikonPvId>, IfdId::nikonPvId}},
     {{0x001f, IfdId::nikon3Id}, EXV_BINARY_ARRAY(nikonVrCfg, nikonVrDef)},
     {{0x0023, IfdId::nikon3Id}, EXV_BINARY_ARRAY(nikonPcCfg, nikonPcDef)},
     {{0x0024, IfdId::nikon3Id}, EXV_BINARY_ARRAY(nikonWtCfg, nikonWtDef)},
@@ -1839,7 +1839,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
 
     // Samsung2 makernote
     {{0x0021, IfdId::samsung2Id}, EXV_BINARY_ARRAY(samsungPwCfg, samsungPwDef)},
-    {{0x0035, IfdId::samsung2Id}, &newTiffSubIfd<IfdId::samsungPvId>},
+    {{0x0035, IfdId::samsung2Id}, {&newTiffSubIfd<IfdId::samsungPvId>, IfdId::samsungPvId}},
     {{Tag::next, IfdId::samsung2Id}, ignoreTiffComponent},
     {{Tag::all, IfdId::samsung2Id}, &newTiffEntry},
 
@@ -1881,7 +1881,7 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
 
     // Sony1 makernote
     {{0x0114, IfdId::sony1Id}, EXV_COMPLEX_BINARY_ARRAY(sony1CsSet, &sonyCsSelector)},
-    {{0xb028, IfdId::sony1Id}, &newTiffSubIfd<IfdId::sonyMltId>},
+    {{0xb028, IfdId::sony1Id}, {&newTiffSubIfd<IfdId::sonyMltId>, IfdId::sonyMltId}},
     {{Tag::next, IfdId::sony1Id}, ignoreTiffComponent},
     {{Tag::all, IfdId::sony1Id}, &newTiffEntry},
 
@@ -1958,8 +1958,8 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     {{Tag::pana, IfdId::ifdIdNotSet}, &newTiffDirectory<IfdId::panaRawId>},
 
     // IFD0 of Panasonic RAW images
-    {{0x8769, IfdId::panaRawId}, &newTiffSubIfd<IfdId::exifId>},
-    {{0x8825, IfdId::panaRawId}, &newTiffSubIfd<IfdId::gpsId>},
+    {{0x8769, IfdId::panaRawId}, {&newTiffSubIfd<IfdId::exifId>, IfdId::exifId}},
+    {{0x8825, IfdId::panaRawId}, {&newTiffSubIfd<IfdId::gpsId>, IfdId::gpsId}},
     //        {{    0x0111, IfdId::panaRawId,        newTiffImageData<0x0117, IfdId::panaRawId>       },
     //        {{    0x0117, IfdId::panaRawId,        newTiffImageSize<0x0111, IfdId::panaRawId>       },
     {{Tag::next, IfdId::panaRawId}, ignoreTiffComponent},
@@ -1978,6 +1978,8 @@ const TiffGroupTable TiffCreator::tiffGroupTable_ = {
     {{Tag::next, IfdId::ignoreId}, ignoreTiffComponent},
     {{Tag::all, IfdId::ignoreId}, &newTiffEntry},
 };
+
+
 
 // TIFF mapping table for special decoding and encoding requirements
 const TiffMappingInfo TiffMapping::tiffMappingInfo_[] = {
@@ -2013,8 +2015,8 @@ TiffComponent::UniquePtr TiffCreator::create(uint32_t extendedTag, IfdId group) 
   if (i == tiffGroupTable_.end()) {
     i = tiffGroupTable_.find(TiffGroupKey(Tag::all, group));
   }
-  if (i != tiffGroupTable_.end() && i->second) {
-    return i->second(tag, group);
+  if (i != tiffGroupTable_.end() && i->second.compFct_) {
+    return i->second.compFct_(tag, group);
   }
 #ifdef EXIV2_DEBUG_MESSAGES
   if (i == tiffGroupTable_.end())
@@ -2040,6 +2042,16 @@ TiffPath TiffCreator::getPath(uint32_t extendedTag, IfdId group, uint32_t root) 
     }
   }
   return ret;
+}
+
+TiffCreator::TiffSubIfdTable TiffCreator::getSubIfdTable() {
+  TiffSubIfdTable subIfds;
+  for (const auto& [key, entry] : tiffGroupTable_) {
+    if (entry.targetId_ != IfdId::ifdIdNotSet) {
+      subIfds.emplace_back(key, entry.targetId_);
+    }
+  }
+  return subIfds;
 }
 
 ByteOrder TiffParserWorker::decode(ExifData& exifData, IptcData& iptcData, XmpData& xmpData, const byte* pData,

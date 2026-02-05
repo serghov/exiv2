@@ -483,6 +483,12 @@ class TiffEncoder : public TiffVisitor {
     This method is called from the constructor.
    */
   void encodeXmp();
+  /*!
+    @brief Check if any SubIFD tags point to empty IFDs and delete them if so.
+           This specifically handles Exif.Image.GPSTag and Exif.Image.ExifTag.
+    This method is called from the constructor.
+   */
+  void checkMissingSubIfds();
   //@}
 
   //! @name Accessors
